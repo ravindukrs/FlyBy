@@ -14,6 +14,7 @@ import (
 type JobsViewModel struct {
 	client         *concourse.Client
 	jobs           []concourse.Job
+	filteredJobs   []concourse.Job
 	selected       int
 	loading        bool
 	err            error
@@ -21,13 +22,17 @@ type JobsViewModel struct {
 	triggeringJob  string
 	triggerResult  string
 	triggerError   error
+	searchQuery    string
+	searchMode     bool
 }
 
 // NewJobsViewModel creates a new jobs view model
 func NewJobsViewModel() JobsViewModel {
 	return JobsViewModel{
-		selected: 0,
-		loading:  false,
+		selected:     0,
+		loading:      false,
+		searchQuery:  "",
+		searchMode:   false,
 	}
 }
 
@@ -60,8 +65,61 @@ func (m JobsViewModel) LoadJobs(client *concourse.Client, pipeline string) tea.C
 	}
 }
 
+// filterJobs filters jobs based on the current search query
+func (m *JobsViewModel) filterJobs() {
+	if m.searchQuery == "" {
+		m.filteredJobs = make([]concourse.Job, len(m.jobs))
+		copy(m.filteredJobs, m.jobs)
+	} else {
+		m.filteredJobs = nil
+		query := strings.ToLower(m.searchQuery)
+		for _, job := range m.jobs {
+			if strings.Contains(strings.ToLower(job.Name), query) ||
+			   strings.Contains(strings.ToLower(job.PipelineName), query) ||
+			   strings.Contains(strings.ToLower(job.TeamName), query) {
+				m.filteredJobs = append(m.filteredJobs, job)
+			}
+		}
+	}
+	
+	// Reset selection and scroll if it's out of bounds
+	if m.selected >= len(m.filteredJobs) {
+		m.selected = 0
+	}
+	if m.selected < 0 && len(m.filteredJobs) > 0 {
+		m.selected = 0
+	}
+}
+
 // Update handles messages for the jobs view
 func (m JobsViewModel) Update(msg tea.KeyMsg) (JobsViewModel, tea.Cmd) {
+	// Handle search mode
+	if m.searchMode {
+		switch msg.String() {
+		case "enter":
+			m.searchMode = false
+		case "esc":
+			m.searchMode = false
+			m.searchQuery = ""
+			m.filterJobs()
+		case "backspace":
+			if len(m.searchQuery) > 0 {
+				m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+				m.filterJobs()
+			}
+		case "ctrl+u":
+			m.searchQuery = ""
+			m.filterJobs()
+		default:
+			if len(msg.String()) == 1 {
+				m.searchQuery += msg.String()
+				m.filterJobs()
+			}
+		}
+		return m, nil
+	}
+	
+	// Handle normal navigation mode
 	switch msg.String() {
 	case "f5":
 		// Refresh jobs
@@ -77,14 +135,14 @@ func (m JobsViewModel) Update(msg tea.KeyMsg) (JobsViewModel, tea.Cmd) {
 		m.triggerResult = ""
 		m.triggerError = nil
 	case "down", "j":
-		if m.selected < len(m.jobs)-1 {
+		if m.selected < len(m.filteredJobs)-1 {
 			m.selected++
 		}
 		// Clear trigger results when navigating
 		m.triggerResult = ""
 		m.triggerError = nil
 	case "enter", "t":
-		if len(m.jobs) > 0 {
+		if len(m.filteredJobs) > 0 {
 			return m, m.triggerJob()
 		}
 	case "x", "clear":
@@ -93,12 +151,14 @@ func (m JobsViewModel) Update(msg tea.KeyMsg) (JobsViewModel, tea.Cmd) {
 		m.triggerError = nil
 		m.triggeringJob = ""
 	case "b":
-		if len(m.jobs) > 0 {
-			job := m.jobs[m.selected]
+		if len(m.filteredJobs) > 0 {
+			job := m.filteredJobs[m.selected]
 			return m, func() tea.Msg {
 				return SwitchViewMsg{View: ViewBuilds, Job: job.Name, Pipeline: job.PipelineName}
 			}
 		}
+	case "/", "s":
+		m.searchMode = true
 	}
 	
 	return m, nil
@@ -106,11 +166,11 @@ func (m JobsViewModel) Update(msg tea.KeyMsg) (JobsViewModel, tea.Cmd) {
 
 // triggerJob triggers the selected job
 func (m JobsViewModel) triggerJob() tea.Cmd {
-	if len(m.jobs) == 0 {
+	if len(m.filteredJobs) == 0 {
 		return nil
 	}
 	
-	job := m.jobs[m.selected]
+	job := m.filteredJobs[m.selected]
 	return func() tea.Msg {
 		return TriggerJobRequestMsg{
 			Pipeline: job.PipelineName,
@@ -126,6 +186,7 @@ func (m JobsViewModel) HandleJobsLoaded(msg JobsLoadedMsg) JobsViewModel {
 	m.pipeline = msg.Pipeline
 	m.loading = false
 	m.selected = 0
+	m.filterJobs() // Filter the loaded jobs
 	return m
 }
 
@@ -176,6 +237,15 @@ func (m JobsViewModel) View(width, height int, target string) string {
 		Border(lipgloss.NormalBorder(), false, false, false, true).
 		BorderForeground(lipgloss.Color("205"))
 	
+	searchStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Padding(0, 1).
+		MarginBottom(1)
+	
+	searchActiveStyle := searchStyle.Copy().
+		BorderForeground(lipgloss.Color("205"))
+	
 	var content strings.Builder
 	title := "Jobs"
 	if m.pipeline != "" {
@@ -196,13 +266,32 @@ func (m JobsViewModel) View(width, height int, target string) string {
 		return content.String()
 	}
 	
-	if len(m.jobs) == 0 {
-		content.WriteString("No jobs found.\n")
+	// Add search box
+	searchPrompt := "Search: "
+	searchText := m.searchQuery
+	if m.searchMode {
+		searchText += "█" // cursor
+		content.WriteString(searchActiveStyle.Render(searchPrompt + searchText))
+	} else {
+		if m.searchQuery != "" {
+			content.WriteString(searchStyle.Render(searchPrompt + searchText))
+		} else {
+			content.WriteString(searchStyle.Render(searchPrompt + "(/,s to search)"))
+		}
+	}
+	content.WriteString("\n\n")
+	
+	if len(m.filteredJobs) == 0 {
+		if m.searchQuery != "" {
+			content.WriteString("No jobs match search query.\n")
+		} else {
+			content.WriteString("No jobs found.\n")
+		}
 		return content.String()
 	}
 	
 	// Show jobs list
-	for i, job := range m.jobs {
+	for i, job := range m.filteredJobs {
 		status := ""
 		if job.FinishedBuild.Status != "" {
 			status = fmt.Sprintf(" [%s]", strings.ToUpper(job.FinishedBuild.Status))
@@ -219,7 +308,7 @@ func (m JobsViewModel) View(width, height int, target string) string {
 	}
 	
 	// Show selected job info
-	if len(m.jobs) > 0 {
+	if len(m.filteredJobs) > 0 {
 		content.WriteString("\n")
 		infoStyle := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -227,7 +316,7 @@ func (m JobsViewModel) View(width, height int, target string) string {
 			Padding(1).
 			MarginTop(1)
 		
-		job := m.jobs[m.selected]
+		job := m.filteredJobs[m.selected]
 		info := fmt.Sprintf("Job: %s\nPipeline: %s\nTeam: %s", 
 			job.Name, job.PipelineName, job.TeamName)
 		
@@ -287,6 +376,20 @@ func (m JobsViewModel) View(width, height int, target string) string {
 			content.WriteString(resultStyle.Render("Output:\n" + m.triggerResult))
 		}
 	}
+
+	// Help text
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Italic(true).
+		MarginTop(1)
+	
+	var help string
+	if m.searchMode {
+		help = "Enter: finish search • Esc: cancel search • Ctrl+U: clear"
+	} else {
+		help = "↑/↓: navigate • Enter/t: trigger • b: builds • /,s: search • x: clear • F5: refresh • Esc: back"
+	}
+	content.WriteString(helpStyle.Render(help))
 
 	return content.String()
 }

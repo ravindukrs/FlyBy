@@ -46,6 +46,13 @@ FlyBy is a powerful Terminal User Interface (TUI) application that provides an i
 - Loading indicators and progress feedback
 - **Manual Refresh** with F5 key across all views
 
+### 🔍 **Search Functionality** (NEW!)
+- **Universal search** across all views (Targets, Pipelines, Jobs, Resources)
+- **Real-time filtering** as you type
+- **Multiple search fields**: Search by names, types, teams, and more
+- **Visual search indicators** with active/inactive states
+- **Keyboard shortcuts** for efficient search workflow
+
 ### 🎨 **User Experience**
 - Intuitive keyboard navigation
 - Color-coded status indicators
@@ -105,30 +112,71 @@ Main Menu
 - **Esc**: Go back to previous view
 - **q**: Quit application
 - **F5**: Refresh current view ✨
+- **/ or s**: Start search in any view ✨
+- **Ctrl+U**: Clear search query ✨
+
+### Search Mode Controls ✨
+- **Type**: Enter search query (real-time filtering)
+- **Enter**: Finish search (stay in filtered results)
+- **Esc**: Cancel search and clear filter
+- **Backspace**: Delete last character
+- **Ctrl+U**: Clear entire search query
 
 ### Target View
 - **a**: Add new target
 - **d**: Delete target
 - **Enter**: Select target and view pipelines
+- **i**: Toggle detailed target information
+- **/ or s**: Search targets by name, URL, or team
 
 ### Pipeline View
 - **j**: View jobs for selected pipeline
 - **r**: View resources for selected pipeline
 - **p**: Pause/unpause pipeline
-- **t**: Trigger pipeline (first job)
+- **/ or s**: Search pipelines by name or team
 
 ### Jobs View
 - **Enter/t**: Trigger selected job
 - **b**: View build history for selected job
+- **/ or s**: Search jobs by name, pipeline, or team
 
 ### Resources View
 - **Enter/c**: Check selected resource
+- **/ or s**: Search resources by name, type, pipeline, or team
 
 ### Builds View ✨
 - **Enter**: **Rerun selected build** (with same inputs)
 - **F5**: Refresh build list
 
 ## 🎯 Key Features Explained
+
+### Universal Search System ✨
+
+**FlyBy provides powerful search capabilities across all views:**
+
+**Search Triggers:**
+- Press **`/`** or **`s`** to start searching in any view
+- Search box appears with real-time visual feedback
+
+**Search Capabilities:**
+- **Targets**: Search by name, API URL, or team
+- **Pipelines**: Search by pipeline name or team  
+- **Jobs**: Search by job name, pipeline, or team
+- **Resources**: Search by resource name, type, pipeline, or team
+
+**Search Features:**
+- **Real-time filtering**: Results update as you type
+- **Visual indicators**: Search box highlights when active
+- **Cursor display**: Shows typing position in search mode
+- **Selection preservation**: Maintains correct selection after filtering
+
+**Search Workflow:**
+1. **Start**: Press `/` or `s` to enter search mode
+2. **Type**: Enter your search query (case-insensitive)
+3. **Filter**: Results update in real-time
+4. **Navigate**: Use arrow keys to select from filtered results
+5. **Finish**: Press Enter to stay with filtered results
+6. **Clear**: Press Esc to cancel search, or Ctrl+U to clear query
 
 ### Build Rerunning vs Job Triggering
 
@@ -157,9 +205,29 @@ All operations provide comprehensive feedback:
 
 Press **F5** in any view to refresh data:
 - **Pipelines**: Reload pipeline list and status
-- **Jobs**: Refresh job list and status
+- **Jobs**: Refresh job list and status  
 - **Resources**: Update resource status and check times
 - **Builds**: Reload build history (useful after build operations)
+
+**Note**: Search filters are preserved during refresh operations.
+
+### Search Examples
+
+**Finding a specific pipeline:**
+```
+1. Navigate to Pipelines view
+2. Press '/' to start search
+3. Type "deploy" → Only pipelines with "deploy" in name/team show
+4. Use arrows to select, Enter to proceed to jobs
+```
+
+**Filtering resources by type:**
+```  
+1. Navigate to Resources view
+2. Press 's' to start search
+3. Type "git" → Only git-type resources show
+4. Select resource and press Enter to check
+```
 
 ## 🔧 Requirements
 

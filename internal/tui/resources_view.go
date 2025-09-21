@@ -58,15 +58,18 @@ func formatTimeAgo(t time.Time) string {
 
 // ResourcesViewModel represents the resources view
 type ResourcesViewModel struct {
-	client        *concourse.Client
-	resources     []concourse.Resource
-	selected      int
-	state         resourcesState
-	err           error
-	pipeline      string
+	client           *concourse.Client
+	resources        []concourse.Resource
+	filteredResources []concourse.Resource
+	selected         int
+	state            resourcesState
+	err              error
+	pipeline         string
 	checkingResource string
-	checkResult   string
-	checkError    error
+	checkResult      string
+	checkError       error
+	searchQuery      string
+	searchMode       bool
 }
 
 // ResourceCheckMsg represents a resource check result
@@ -91,8 +94,10 @@ type ReloadResourcesMsg struct {
 // NewResourcesViewModel creates a new resources view model
 func NewResourcesViewModel() ResourcesViewModel {
 	return ResourcesViewModel{
-		selected: 0,
-		state:    resourcesStateList,
+		selected:     0,
+		state:        resourcesStateList,
+		searchQuery:  "",
+		searchMode:   false,
 	}
 }
 
@@ -115,6 +120,33 @@ func (m ResourcesViewModel) LoadResources(client *concourse.Client, pipeline str
 	}
 }
 
+// filterResources filters resources based on the current search query
+func (m *ResourcesViewModel) filterResources() {
+	if m.searchQuery == "" {
+		m.filteredResources = make([]concourse.Resource, len(m.resources))
+		copy(m.filteredResources, m.resources)
+	} else {
+		m.filteredResources = nil
+		query := strings.ToLower(m.searchQuery)
+		for _, resource := range m.resources {
+			if strings.Contains(strings.ToLower(resource.Name), query) ||
+			   strings.Contains(strings.ToLower(resource.Type), query) ||
+			   strings.Contains(strings.ToLower(resource.PipelineName), query) ||
+			   strings.Contains(strings.ToLower(resource.TeamName), query) {
+				m.filteredResources = append(m.filteredResources, resource)
+			}
+		}
+	}
+	
+	// Reset selection and scroll if it's out of bounds
+	if m.selected >= len(m.filteredResources) {
+		m.selected = 0
+	}
+	if m.selected < 0 && len(m.filteredResources) > 0 {
+		m.selected = 0
+	}
+}
+
 // ReloadResources reloads resources data (used after successful operations)
 func (m ResourcesViewModel) ReloadResources(client *concourse.Client) tea.Cmd {
 	if m.pipeline == "" {
@@ -133,6 +165,33 @@ func (m ResourcesViewModel) ReloadResources(client *concourse.Client) tea.Cmd {
 
 // Update handles messages for the resources view
 func (m ResourcesViewModel) Update(msg tea.KeyMsg) (ResourcesViewModel, tea.Cmd) {
+	// Handle search mode
+	if m.searchMode {
+		switch msg.String() {
+		case "enter":
+			m.searchMode = false
+		case "esc":
+			m.searchMode = false
+			m.searchQuery = ""
+			m.filterResources()
+		case "backspace":
+			if len(m.searchQuery) > 0 {
+				m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+				m.filterResources()
+			}
+		case "ctrl+u":
+			m.searchQuery = ""
+			m.filterResources()
+		default:
+			if len(msg.String()) == 1 {
+				m.searchQuery += msg.String()
+				m.filterResources()
+			}
+		}
+		return m, nil
+	}
+	
+	// Handle normal navigation mode
 	switch msg.String() {
 	case "f5":
 		// Refresh resources
@@ -148,15 +207,15 @@ func (m ResourcesViewModel) Update(msg tea.KeyMsg) (ResourcesViewModel, tea.Cmd)
 			m.checkError = nil
 		}
 	case "down", "j":
-		if m.selected < len(m.resources)-1 {
+		if m.selected < len(m.filteredResources)-1 {
 			m.selected++
 			// Clear check results when navigating
 			m.checkResult = ""
 			m.checkError = nil
 		}
 	case "enter", "c":
-		if len(m.resources) > 0 {
-			resource := m.resources[m.selected]
+		if len(m.filteredResources) > 0 {
+			resource := m.filteredResources[m.selected]
 			return m, func() tea.Msg {
 				return CheckResourceRequestMsg{
 					Pipeline: resource.PipelineName,
@@ -169,6 +228,8 @@ func (m ResourcesViewModel) Update(msg tea.KeyMsg) (ResourcesViewModel, tea.Cmd)
 		m.checkResult = ""
 		m.checkError = nil
 		m.checkingResource = ""
+	case "/", "s":
+		m.searchMode = true
 	}
 	
 	return m, nil
@@ -176,11 +237,11 @@ func (m ResourcesViewModel) Update(msg tea.KeyMsg) (ResourcesViewModel, tea.Cmd)
 
 // checkResource checks the selected resource
 func (m *ResourcesViewModel) checkResource(client *concourse.Client) tea.Cmd {
-	if len(m.resources) == 0 || client == nil {
+	if len(m.filteredResources) == 0 || client == nil {
 		return nil
 	}
 	
-	resource := m.resources[m.selected]
+	resource := m.filteredResources[m.selected]
 	resourceName := fmt.Sprintf("%s/%s", resource.PipelineName, resource.Name)
 	
 	// Set checking state
@@ -216,6 +277,7 @@ func (m ResourcesViewModel) HandleResourcesLoaded(msg ResourcesLoadedMsg) Resour
 		}
 	}
 	
+	m.filterResources() // Filter the loaded resources
 	return m
 }
 
@@ -273,6 +335,15 @@ func (m ResourcesViewModel) View(width, height int, target string) string {
 		Border(lipgloss.NormalBorder(), false, false, false, true).
 		BorderForeground(lipgloss.Color("205"))
 	
+	searchStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Padding(0, 1).
+		MarginBottom(1)
+	
+	searchActiveStyle := searchStyle.Copy().
+		BorderForeground(lipgloss.Color("205"))
+	
 	var content strings.Builder
 	title := "Resources"
 	if m.pipeline != "" {
@@ -293,13 +364,32 @@ func (m ResourcesViewModel) View(width, height int, target string) string {
 		return content.String()
 	}
 	
-	if len(m.resources) == 0 {
-		content.WriteString("No resources found.\n")
+	// Add search box
+	searchPrompt := "Search: "
+	searchText := m.searchQuery
+	if m.searchMode {
+		searchText += "█" // cursor
+		content.WriteString(searchActiveStyle.Render(searchPrompt + searchText))
+	} else {
+		if m.searchQuery != "" {
+			content.WriteString(searchStyle.Render(searchPrompt + searchText))
+		} else {
+			content.WriteString(searchStyle.Render(searchPrompt + "(/,s to search)"))
+		}
+	}
+	content.WriteString("\n\n")
+	
+	if len(m.filteredResources) == 0 {
+		if m.searchQuery != "" {
+			content.WriteString("No resources match search query.\n")
+		} else {
+			content.WriteString("No resources found.\n")
+		}
 		return content.String()
 	}
 	
 	// Show resources list
-	for i, resource := range m.resources {
+	for i, resource := range m.filteredResources {
 		line := fmt.Sprintf("%s (%s)", resource.Name, resource.Type)
 		
 		if i == m.selected {
@@ -311,7 +401,7 @@ func (m ResourcesViewModel) View(width, height int, target string) string {
 	}
 	
 	// Show selected resource info
-	if len(m.resources) > 0 {
+	if len(m.filteredResources) > 0 {
 		content.WriteString("\n")
 		infoStyle := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -319,7 +409,7 @@ func (m ResourcesViewModel) View(width, height int, target string) string {
 			Padding(1).
 			MarginTop(1)
 		
-		resource := m.resources[m.selected]
+		resource := m.filteredResources[m.selected]
 		info := fmt.Sprintf("Resource: %s\nType: %s\nPipeline: %s\nTeam: %s", 
 			resource.Name, resource.Type, resource.PipelineName, resource.TeamName)
 		
@@ -386,6 +476,20 @@ func (m ResourcesViewModel) View(width, height int, target string) string {
 			}
 		}
 	}
+	
+	// Help text
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Italic(true).
+		MarginTop(1)
+	
+	var help string
+	if m.searchMode {
+		help = "Enter: finish search • Esc: cancel search • Ctrl+U: clear"
+	} else {
+		help = "↑/↓: navigate • Enter/c: check • /,s: search • x: clear • F5: refresh • Esc: back"
+	}
+	content.WriteString(helpStyle.Render(help))
 	
 	return content.String()
 }
